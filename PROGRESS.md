@@ -18,6 +18,16 @@ Target: **public LB ≥ 0.65**. Deadline: **2026-11-18 18:30 UTC**. Max 5 subs/d
 - Split: data/split.csv — 10,253 train / 1,140 val, stratified by defect pattern (seed 42).
 - Local proxy metric: 0.7 * mean per-class Dice (GT-nonempty rows) + 0.3 * empty-row accuracy.
 
+## Hardware findings (benchmarked)
+- fp16 autocast train step: 398 ms @ B=10 (6.8 min/epoch, 2.69 GiB peak) — fp32 @ B=10 is 14x SLOWER (5.6 s/step) → always autocast for training.
+- fp32 eval forward: 0.15 s/batch @ B=10 → validation ~30 s for 1,140 images.
+- First eval call pays a one-time ~1-2 min cuDNN benchmark search (eval-mode shapes).
+- DataLoader: 18 ms/batch with 2 workers (Windows: file_system sharing, no pin_memory, module-level Dataset for spawn pickling).
+
+## Model
+- Primary: **SegFormer (smp.Segformer, mit_b2, 24.7M params)**, batch 10, 15 epochs, BCE(pos_weight)+Dice, cosine LR, HFlip/Brightness/GaussNoise aug.
+- Per-class threshold sweep on val each epoch; checkpoint selected on tuned-threshold proxy.
+
 ## Submissions log
 | # | Method | File | CV proxy | Public LB | Notes |
 |---|--------|------|----------|-----------|-------|

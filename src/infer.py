@@ -50,7 +50,7 @@ def load_model(ckpt_path: str, arch: str = "segformer", encoder: str = "mit_b2")
 
 
 @torch.no_grad()
-def predict(model, image_paths, batch_size=32):
+def predict(model, image_paths, batch_size=16):
     probs_out = []
     for i in range(0, len(image_paths), batch_size):
         batch = []
@@ -63,9 +63,8 @@ def predict(model, image_paths, batch_size=32):
             img = (img.astype(np.float32) / 255.0 - MEAN) / STD
             batch.append(img)
         x = torch.from_numpy(np.stack(batch))[:, None].to(DEVICE)
-        with torch.autocast("cuda", dtype=torch.float16):
-            logits = model(x)
-        probs = torch.sigmoid(logits.float())
+        logits = model(x)
+        probs = torch.sigmoid(logits)
         probs_out.append(probs.cpu())
     return torch.cat(probs_out)  # (N, 4, H, W)
 
@@ -110,9 +109,8 @@ def main():
                 img = (img.astype(np.float32) / 255.0 - MEAN) / STD
                 batch.append(img)
             x = torch.from_numpy(np.stack(batch))[:, None].to(DEVICE).flip(-1)
-            with torch.autocast("cuda", dtype=torch.float16):
-                logits = model(x)
-            pr = torch.sigmoid(logits.float()).flip(-1).cpu()
+            logits = model(x)
+            pr = torch.sigmoid(logits).flip(-1).cpu()
             probs_f.append(pr)
         probs = (probs + torch.cat(probs_f)) / 2
 
