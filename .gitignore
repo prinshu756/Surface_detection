@@ -2,3 +2,5 @@
 checkpoints
 data
 __pycache__
+outputs/*
+!outputs/eda_report.json

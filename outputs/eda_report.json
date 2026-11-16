@@ -1,0 +1,115 @@
+{
+  "train_shape": [
+    45572,
+    5
+  ],
+  "identical_train_csvs": true,
+  "widths": [
+    800
+  ],
+  "heights": [
+    128
+  ],
+  "n_train_images": 11393,
+  "n_train_ids_in_csv": 11393,
+  "ids_missing_image": [],
+  "image_extensions": [
+    ".jpg"
+  ],
+  "defect_a_bbox_rows_mean": 58.03237742830712,
+  "defect_a_bbox_cols_mean": 78.13413506012951,
+  "defect_b_bbox_rows_mean": 88.3035143769968,
+  "defect_b_bbox_cols_mean": 12.44408945686901,
+  "defect_c_bbox_rows_mean": 101.46,
+  "defect_c_bbox_cols_mean": 201.02536585365854,
+  "defect_d_bbox_rows_mean": 82.09490333919156,
+  "defect_d_bbox_cols_mean": 187.7111892208553,
+  "n_nonempty": 7201,
+  "p_nonempty": 0.1580136926182744,
+  "per_class": {
+    "defect_a": {
+      "n_rows": 11393,
+      "n_defect": 1081,
+      "frac_defect": 0.09488282278592118,
+      "area_mean": 748.7400555041628,
+      "area_median": 472.0,
+      "area_p90": 1712.0,
+      "area_max": 7827,
+      "t_x_over_area": 0.18100218930846515,
+      "t_y_over_area": 0.0844378715770434
+    },
+    "defect_b": {
+      "n_rows": 11393,
+      "n_defect": 313,
+      "frac_defect": 0.02747300974282454,
+      "area_mean": 689.1405750798722,
+      "area_median": 620.0,
+      "area_p90": 1224.8000000000002,
+      "area_max": 2992,
+      "t_x_over_area": 0.2674999188691754,
+      "t_y_over_area": 0.03570683492427017
+    },
+    "defect_c": {
+      "n_rows": 11393,
+      "n_defect": 4100,
+      "frac_defect": 0.35987009567278155,
+      "area_mean": 5557.879024390244,
+      "area_median": 2313.0,
+      "area_p90": 13860.8,
+      "area_max": 89138,
+      "t_x_over_area": 0.06598213636856734,
+      "t_y_over_area": 0.0353096180223865
+    },
+    "defect_d": {
+      "n_rows": 11393,
+      "n_defect": 1707,
+      "frac_defect": 0.14982884227157026,
+      "area_mean": 7150.260105448155,
+      "area_median": 5143.0,
+      "area_p90": 15968.2,
+      "area_max": 50138,
+      "t_x_over_area": 0.03579093152640934,
+      "t_y_over_area": 0.04948558411482567
+    }
+  },
+  "images_with_multiple_defects": 1198,
+  "images_with_any_defect": 5877,
+  "n_images": 11393,
+  "sub_shape": [
+    12000,
+    5
+  ],
+  "sub_n_filled": 1146,
+  "sub_filled_per_class": {
+    "defect_a": 282,
+    "defect_b": 282,
+    "defect_c": 299,
+    "defect_d": 283
+  },
+  "sub_filled_area_mean": 5147.8568935427575,
+  "sub_filled_area_median": 4614.0,
+  "sub_filled_unique_images": 979,
+  "img_mean_rgb": [
+    0.3388,
+    0.3388,
+    0.3388
+  ],
+  "img_std_rgb": [
+    0.2055,
+    0.2055,
+    0.2055
+  ],
+  "orient_CBAI12YPVU": {
+    "col_tx": 1488,
+    "col_ty": 1222,
+    "row_tx": 1475,
+    "row_ty": 12235
+  },
+  "orient_WHU0U9Z4CT": {
+    "col_tx": 489,
+    "col_ty": 2913,
+    "row_tx": 3163,
+    "row_ty": 26884
+  },
+  "all_empty_proxy_score": 0.25259589221451767
+}
