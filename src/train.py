@@ -34,7 +34,8 @@ CLASSES = ["defect_a", "defect_b", "defect_c", "defect_d"]
 W, H = 800, 128
 MEAN, STD = 0.3388, 0.2055
 DEVICE = "cuda"
-NUM_WORKERS = 4
+NUM_WORKERS = 2
+PIN_MEMORY = False  # Windows shared-memory paging-file limitation (error 1455)
 
 THRESHOLDS = np.arange(0.20, 0.91, 0.05, dtype=np.float32)
 
@@ -165,6 +166,7 @@ def main():
     args = parse_args()
     tag = args.tag or args.encoder.replace("/", "_")
     torch.backends.cudnn.benchmark = True
+    torch.multiprocessing.set_sharing_strategy("file_system")  # Windows paging-file fix
     train_df = pd.read_csv(os.path.join(DATA, "train.csv"))
     split = pd.read_csv(os.path.join(DATA, "split.csv"))
     df = train_df.merge(split, on="image_id")
@@ -203,9 +205,9 @@ def main():
     train_ds = DefectDataset(tr, img_dir, aug_tf)
     val_ds = DefectDataset(va, img_dir, val_tf)
     train_ld = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=NUM_WORKERS,
-                          pin_memory=True, persistent_workers=True, drop_last=True)
+                          pin_memory=PIN_MEMORY, persistent_workers=True, drop_last=True)
     val_ld = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=NUM_WORKERS,
-                        pin_memory=True, persistent_workers=True)
+                        pin_memory=PIN_MEMORY, persistent_workers=True)
 
     arch = {"unet": smp.Unet, "unetplusplus": smp.UnetPlusPlus, "deeplabv3plus": smp.DeepLabV3Plus}[args.arch]
     model = arch(encoder_name=args.encoder, encoder_weights="imagenet",
