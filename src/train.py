@@ -151,12 +151,13 @@ def validate(model, loader):
 def parse_args():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--encoder", default="efficientnet-b0")
-    ap.add_argument("--arch", default="unet", choices=["unet", "unetplusplus", "deeplabv3plus"])
+    ap.add_argument("--encoder", default=None, help="encoder name; default depends on arch")
+    ap.add_argument("--arch", default="segformer",
+                    choices=["unet", "unetplusplus", "deeplabv3plus", "segformer", "upernet"])
     ap.add_argument("--epochs", type=int, default=15)
-    ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--batch", type=int, default=10)
     ap.add_argument("--lr", type=float, default=3e-4)
-    ap.add_argument("--tag", default=None, help="checkpoint/log tag; defaults to encoder name")
+    ap.add_argument("--tag", default=None, help="checkpoint/log tag; defaults to arch_encoder")
     ap.add_argument("--vflip", action="store_true", help="also use vertical flip augmentation")
     ap.add_argument("--rotate", action="store_true", help="add small ShiftScaleRotate augmentation")
     return ap.parse_args()
@@ -164,7 +165,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    tag = args.tag or args.encoder.replace("/", "_")
+    if args.encoder is None:
+        args.encoder = "mit_b2" if args.arch == "segformer" else "efficientnet-b0"
+    tag = args.tag or f"{args.arch}_{args.encoder}"
     torch.backends.cudnn.benchmark = True
     torch.multiprocessing.set_sharing_strategy("file_system")  # Windows paging-file fix
     train_df = pd.read_csv(os.path.join(DATA, "train.csv"))
@@ -209,7 +212,9 @@ def main():
     val_ld = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=NUM_WORKERS,
                         pin_memory=PIN_MEMORY, persistent_workers=True)
 
-    arch = {"unet": smp.Unet, "unetplusplus": smp.UnetPlusPlus, "deeplabv3plus": smp.DeepLabV3Plus}[args.arch]
+    arch = {"unet": smp.Unet, "unetplusplus": smp.UnetPlusPlus,
+            "deeplabv3plus": smp.DeepLabV3Plus, "segformer": smp.Segformer,
+            "upernet": smp.UPerNet}[args.arch]
     model = arch(encoder_name=args.encoder, encoder_weights="imagenet",
                  in_channels=1, classes=4).to(DEVICE)
     print(f"model: {args.arch}/{args.encoder}, params {sum(p.numel() for p in model.parameters())/1e6:.2f}M")

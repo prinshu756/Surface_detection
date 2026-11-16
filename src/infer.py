@@ -32,9 +32,18 @@ MEAN, STD = 0.3388, 0.2055
 DEVICE = "cuda"
 
 
-def load_model(ckpt_path: str):
-    model = smp.Unet(encoder_name="efficientnet-b0", encoder_weights=None,
-                     in_channels=1, classes=4).to(DEVICE)
+ARCHS = {
+    "unet": smp.Unet,
+    "unetplusplus": smp.UnetPlusPlus,
+    "deeplabv3plus": smp.DeepLabV3Plus,
+    "segformer": smp.Segformer,
+    "upernet": smp.UPerNet,
+}
+
+
+def load_model(ckpt_path: str, arch: str = "segformer", encoder: str = "mit_b2"):
+    model = ARCHS[arch](encoder_name=encoder, encoder_weights=None,
+                        in_channels=1, classes=4).to(DEVICE)
     model.load_state_dict(torch.load(ckpt_path, map_location=DEVICE))
     model.eval()
     return model
@@ -63,9 +72,11 @@ def predict(model, image_paths, batch_size=32):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default=os.path.join(CKPT, "unet_effb0_best.pt"))
-    ap.add_argument("--sweep", default=os.path.join(CKPT, "unet_effb0_sweep.json"))
-    ap.add_argument("--method", default="unet_effb0")
+    ap.add_argument("--ckpt", default=os.path.join(CKPT, "segformer_mit_b2_best.pt"))
+    ap.add_argument("--sweep", default=os.path.join(CKPT, "segformer_mit_b2_sweep.json"))
+    ap.add_argument("--arch", default="segformer")
+    ap.add_argument("--encoder", default="mit_b2")
+    ap.add_argument("--method", default="segformer_mit_b2")
     ap.add_argument("--thresholds", default=None,
                     help="JSON file overriding per-class thresholds")
     ap.add_argument("--tta_hflip", action="store_true")
@@ -84,7 +95,7 @@ def main():
     unique_ids = sub["image_id"].drop_duplicates().tolist()
     paths = [os.path.join(test_dir, iid + ".jpg") for iid in unique_ids]
 
-    model = load_model(args.ckpt)
+    model = load_model(args.ckpt, args.arch, args.encoder)
     probs = predict(model, paths)
     if args.tta_hflip:
         probs_f = []
