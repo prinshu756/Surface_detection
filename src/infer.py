@@ -87,9 +87,6 @@ def main():
     model = load_model(args.ckpt)
     probs = predict(model, paths)
     if args.tta_hflip:
-        flipped = predict(model, paths)  # placeholder replaced below
-        # proper hflip TTA: predict on flipped images and unflip
-        import torch.nn.functional as F
         probs_f = []
         for i in range(0, len(paths), 32):
             batch = []
