@@ -103,31 +103,29 @@ def validate(model, loader):
         img = img.to(DEVICE, non_blocking=True)
         mask = mask.to(DEVICE, non_blocking=True).bool()
         probs = torch.sigmoid(model(img))
-        gte = mask.flatten(1).any(1)  # (B, 4) GT nonempty flags
+        gte = mask.flatten(2).any(2)  # (B, 4) per-class GT nonempty flags
+        gte_f = gte.float()
+        gsum = mask.sum(dim=(2, 3)).float()  # (B, 4) GT pixel counts
+        n_nonempty += gte_f.sum(0)
+        n_empty += (~gte).float().sum(0)
         for ti, th in enumerate(THRESHOLDS):
             b = probs > th
-            for c in range(4):
-                ne = gte[:, c]
-                if ne.any():
-                    pb = b[:, c][ne]
-                    gb = mask[:, c][ne]
-                    tp[ti, c] += (pb & gb).sum().float()
-                    fp[ti, c] += (pb & ~gb).sum().float()
-                    fn[ti, c] += (~pb & gb).sum().float()
-                correct_empty[ti, c] += ((~b[:, c].flatten(1).any(1)) & ~ne).sum().float()
-                n_nonempty[c] += ne.float().sum()
-                n_empty[c] += (~ne).float().sum()
+            inter = (b & mask).sum(dim=(2, 3)).float()  # (B, 4)
+            psum = b.sum(dim=(2, 3)).float()  # (B, 4)
+            # dice over GT-nonempty images only (GT-empty rows contribute 0)
+            tp[ti] += (inter * gte_f).sum(0)
+            fp[ti] += ((psum - inter) * gte_f).sum(0)
+            fn[ti] += ((gsum - inter) * gte_f).sum(0)
+            # GT-empty images whose class channel is predicted fully empty
+            correct_empty[ti] += ((psum == 0) & ~gte).sum(0).float()
         b5 = probs > 0.5
-        for c in range(4):
-            if gte[:, c].any():
-                p = b5[:, c][gte[:, c]].float()
-                g = mask[:, c][gte[:, c]].float()
-                inter = (p * g).sum(dim=(1, 2))
-                sums = p.sum(dim=(1, 2)) + g.sum(dim=(1, 2))
-                dice50_num[c] += (2 * inter).sum()
-                dice50_den[c] += sums.sum()
+        inter5 = (b5 & mask).sum(dim=(2, 3)).float()
+        psum5 = b5.sum(dim=(2, 3)).float()
+        dice50_num += (2 * inter5 * gte_f).sum(0)
+        dice50_den += ((psum5 + gsum) * gte_f).sum(0)
 
     total_empty = n_empty.sum().clamp(min=1)
+    idx50 = int(np.argmin(np.abs(THRESHOLDS - 0.5)))
     sweep = {}
     best_proxy_sum = 0.0
     for ci, cls in enumerate(CLASSES):
@@ -144,7 +142,7 @@ def validate(model, loader):
     sweep["best_proxy_total"] = best_proxy_sum
     sweep["proxy50"] = float(sum(
         0.7 * (dice50_num[i] / (dice50_den[i] + 1e-7)) / 4 for i in range(4)
-    )) + float(sum(correct_empty[-1, i] for i in range(4)) / total_empty * 0.3)
+    )) + float(sum(correct_empty[idx50, i] for i in range(4)) / total_empty * 0.3)
     return sweep
 
 
@@ -243,7 +241,7 @@ def main():
         sched.step()
         sweep = validate(model, val_ld)
         elapsed = time.time() - t0
-        score = sweep["proxy50"]
+        score = sweep["best_proxy_total"]  # selection on tuned-threshold proxy (what inference deploys)
         log_rows.append({"epoch": ep, "loss": running / max(len(train_ld), 1),
                          "proxy50": score, "best_proxy": sweep["best_proxy_total"],
                          "dice50_a": sweep[CLASSES[0]]["dice50"], "dice50_b": sweep[CLASSES[1]]["dice50"],
@@ -259,7 +257,7 @@ def main():
             with open(os.path.join(CKPT, f"{tag}_sweep.json"), "w") as f:
                 json.dump(sweep, f, indent=2)
     pd.DataFrame(log_rows).to_csv(os.path.join(OUT, f"train_log_{tag}.csv"), index=False)
-    print("best proxy50:", best)
+    print("best proxy:", best)
 
 
 if __name__ == "__main__":
