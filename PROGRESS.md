@@ -40,3 +40,8 @@ Target: **public LB ≥ 0.65**. Deadline: **2026-11-18 18:30 UTC**. Max 5 subs/d
 | # | Method | File | CV proxy | Public LB | Notes |
 |---|--------|------|----------|-----------|-------|
 | 0 | sample-as-is (user) | submission.csv | — | 0.27337 | pre-filled sample masks ≈ noise |
+| 1 | segformer mit_b2 ep3 | submission_segformer_mit_b2_ep3.csv | 0.4964 | **0.47704** | c dice .598 / d .696, a/b = 0 (3 epochs too few for rare classes); CV≈LB → proxy is trustworthy |
+
+## Key insight after submission #1
+- Official score decomposition estimate: FGDice 0.324, FPScore ~0.80, EmptyAcc ~0.90 → to reach 0.65 need avg FGDice ≈ 0.685 → **defect_a and defect_b must start predicting** (they were 0.0).
+- Phase 2 plan: (a) 15-epoch run → expect c/d ↑ and possibly a/b liftoff; (b) if a/b still 0 → oversample a/b rows + raise pos_weight; (c) per-class threshold re-tune on the longer-trained model; (d) hflip TTA.
