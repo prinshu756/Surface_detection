@@ -181,8 +181,8 @@ def main():
     pos_weight = torch.tensor(
         [(1 - freq[c]) / max(freq[c], 1e-3) * 0.35 + 1.0 for c in CLASSES],
         dtype=torch.float32, device=DEVICE,
-    )
-    print("pos_weight:", pos_weight.tolist())
+    ).view(1, 4, 1, 1)  # broadcast across (B, C, H, W)
+    print("pos_weight:", pos_weight.flatten().tolist())
 
     augment = [
         A.HorizontalFlip(p=0.5),
