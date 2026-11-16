@@ -39,6 +39,38 @@ NUM_WORKERS = 4
 THRESHOLDS = np.arange(0.20, 0.91, 0.05, dtype=np.float32)
 
 
+class DefectDataset(Dataset):
+    """Module-level so DataLoader workers on Windows (spawn) can pickle it."""
+
+    def __init__(self, df: pd.DataFrame, img_dir: str, tf):
+        self.df = df.reset_index(drop=True)
+        self.img_dir = img_dir
+        self.tf = tf
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        img = cv2.imread(os.path.join(self.img_dir, row["image_id"] + ".jpg"), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            img = np.zeros((H, W), dtype=np.uint8)
+        elif img.shape != (H, W):
+            img = cv2.resize(img, (W, H))
+        mask = np.zeros((H, W, 4), dtype=np.uint8)
+        for ci, cls in enumerate(CLASSES):
+            if row["defect_type"] == cls:
+                mask[:, :, ci] = rle_decode_np(row["mask_rle"], H, W)
+        out = self.tf(image=img, mask=mask)
+        m = out["mask"]
+        if isinstance(m, torch.Tensor):
+            m = m.numpy()
+        if m.ndim == 3 and m.shape[-1] == 4:      # HWC -> CHW
+            m = m.transpose(2, 0, 1)
+        assert m.shape == (4, H, W), f"bad mask shape {m.shape}"
+        return out["image"], torch.from_numpy(np.ascontiguousarray(m))
+
+
 def dice_soft_loss(pred, target, eps=1.0):
     """Soft Dice averaged over batch and classes, minimized (1 - dice)."""
     probs = torch.sigmoid(pred)
@@ -167,29 +199,6 @@ def main():
         ToTensorV2(),
     ])
     val_tf = A.Compose([A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0), ToTensorV2()])
-
-    class DefectDataset(Dataset):
-        def __init__(self, d: pd.DataFrame, img_dir: str, tf):
-            self.df = d.reset_index(drop=True)
-            self.img_dir = img_dir
-            self.tf = tf
-
-        def __len__(self):
-            return len(self.df)
-
-        def __getitem__(self, idx):
-            row = self.df.iloc[idx]
-            img = cv2.imread(os.path.join(self.img_dir, row["image_id"] + ".jpg"), cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                img = np.zeros((H, W), dtype=np.uint8)
-            elif img.shape != (H, W):
-                img = cv2.resize(img, (W, H))
-            mask = np.zeros((H, W, 4), dtype=np.uint8)
-            for ci, cls in enumerate(CLASSES):
-                if row["defect_type"] == cls:
-                    mask[:, :, ci] = rle_decode_np(row["mask_rle"], H, W)
-            out = self.tf(image=img, mask=mask)
-            return out["image"], out["mask"].permute(2, 0, 1)
 
     train_ds = DefectDataset(tr, img_dir, aug_tf)
     val_ds = DefectDataset(va, img_dir, val_tf)
