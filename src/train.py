@@ -34,47 +34,9 @@ CLASSES = ["defect_a", "defect_b", "defect_c", "defect_d"]
 W, H = 800, 128
 MEAN, STD = 0.3388, 0.2055
 DEVICE = "cuda"
-BATCH = 16
-EPOCHS = 15
-LR = 3e-4
 NUM_WORKERS = 4
 
 THRESHOLDS = np.arange(0.20, 0.91, 0.05, dtype=np.float32)
-
-
-class DefectDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, img_dir: str, augment: bool):
-        self.df = df.reset_index(drop=True)
-        self.img_dir = img_dir
-        self.augment = augment
-        self.t = A.Compose(
-            [
-                A.HorizontalFlip(p=0.5),
-                A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.3),
-                A.GaussNoise(p=0.1),
-                A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0),
-                ToTensorV2(),
-            ]
-        ) if augment else A.Compose(
-            [A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0), ToTensorV2()]
-        )
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        img = cv2.imread(os.path.join(self.img_dir, row["image_id"] + ".jpg"), cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            img = np.zeros((H, W), dtype=np.uint8)
-        elif img.shape != (H, W):
-            img = cv2.resize(img, (W, H))
-        mask = np.zeros((H, W, 4), dtype=np.uint8)
-        for ci, cls in enumerate(CLASSES):
-            if row["defect_type"] == cls:
-                mask[:, :, ci] = rle_decode_np(row["mask_rle"], H, W)
-        out = self.t(image=img, mask=mask)
-        return out["image"], out["mask"].permute(2, 0, 1)  # (1,H,W), (4,H,W)
 
 
 def dice_soft_loss(pred, target, eps=1.0):
@@ -153,7 +115,23 @@ def validate(model, loader):
     return sweep
 
 
+def parse_args():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--encoder", default="efficientnet-b0")
+    ap.add_argument("--arch", default="unet", choices=["unet", "unetplusplus", "deeplabv3plus"])
+    ap.add_argument("--epochs", type=int, default=15)
+    ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--tag", default=None, help="checkpoint/log tag; defaults to encoder name")
+    ap.add_argument("--vflip", action="store_true", help="also use vertical flip augmentation")
+    ap.add_argument("--rotate", action="store_true", help="add small ShiftScaleRotate augmentation")
+    return ap.parse_args()
+
+
 def main():
+    args = parse_args()
+    tag = args.tag or args.encoder.replace("/", "_")
     torch.backends.cudnn.benchmark = True
     train_df = pd.read_csv(os.path.join(DATA, "train.csv"))
     split = pd.read_csv(os.path.join(DATA, "split.csv"))
@@ -165,8 +143,8 @@ def main():
     img_dir = os.path.join(DATA, "public", "train")
 
     # class weights for BCE (presence frequency)
-    freq = tr.groupby("defect_type").apply(
-        lambda g: g["mask_rle"].fillna("").astype(str).str.strip().ne("").mean()
+    freq = tr.groupby("defect_type")["mask_rle"].apply(
+        lambda s: s.fillna("").astype(str).str.strip().ne("").mean()
     )
     pos_weight = torch.tensor(
         [(1 - freq[c]) / max(freq[c], 1e-3) * 0.35 + 1.0 for c in CLASSES],
@@ -174,23 +152,64 @@ def main():
     )
     print("pos_weight:", pos_weight.tolist())
 
-    train_ds = DefectDataset(tr, img_dir, augment=True)
-    val_ds = DefectDataset(va, img_dir, augment=False)
-    train_ld = DataLoader(train_ds, batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS,
+    augment = [
+        A.HorizontalFlip(p=0.5),
+        A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.3),
+        A.GaussNoise(p=0.1),
+    ]
+    if args.vflip:
+        augment.append(A.VerticalFlip(p=0.5))
+    if args.rotate:
+        augment.append(A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05,
+                                          rotate_limit=5, border_mode=cv2.BORDER_REFLECT_101, p=0.3))
+    aug_tf = A.Compose(augment + [
+        A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0),
+        ToTensorV2(),
+    ])
+    val_tf = A.Compose([A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0), ToTensorV2()])
+
+    class DefectDataset(Dataset):
+        def __init__(self, d: pd.DataFrame, img_dir: str, tf):
+            self.df = d.reset_index(drop=True)
+            self.img_dir = img_dir
+            self.tf = tf
+
+        def __len__(self):
+            return len(self.df)
+
+        def __getitem__(self, idx):
+            row = self.df.iloc[idx]
+            img = cv2.imread(os.path.join(self.img_dir, row["image_id"] + ".jpg"), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                img = np.zeros((H, W), dtype=np.uint8)
+            elif img.shape != (H, W):
+                img = cv2.resize(img, (W, H))
+            mask = np.zeros((H, W, 4), dtype=np.uint8)
+            for ci, cls in enumerate(CLASSES):
+                if row["defect_type"] == cls:
+                    mask[:, :, ci] = rle_decode_np(row["mask_rle"], H, W)
+            out = self.tf(image=img, mask=mask)
+            return out["image"], out["mask"].permute(2, 0, 1)
+
+    train_ds = DefectDataset(tr, img_dir, aug_tf)
+    val_ds = DefectDataset(va, img_dir, val_tf)
+    train_ld = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=NUM_WORKERS,
                           pin_memory=True, persistent_workers=True, drop_last=True)
-    val_ld = DataLoader(val_ds, batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS,
+    val_ld = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=NUM_WORKERS,
                         pin_memory=True, persistent_workers=True)
 
-    model = smp.Unet(encoder_name="efficientnet-b0", encoder_weights="imagenet",
-                     in_channels=1, classes=4).to(DEVICE)
+    arch = {"unet": smp.Unet, "unetplusplus": smp.UnetPlusPlus, "deeplabv3plus": smp.DeepLabV3Plus}[args.arch]
+    model = arch(encoder_name=args.encoder, encoder_weights="imagenet",
+                 in_channels=1, classes=4).to(DEVICE)
+    print(f"model: {args.arch}/{args.encoder}, params {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     scaler = torch.amp.GradScaler("cuda")
 
     best = -1.0
     log_rows = []
-    for ep in range(EPOCHS):
+    for ep in range(args.epochs):
         model.train()
         t0 = time.time()
         running = 0.0
@@ -220,10 +239,10 @@ def main():
               f"({elapsed:.0f}s)")
         if score > best:
             best = score
-            torch.save(model.state_dict(), os.path.join(CKPT, "unet_effb0_best.pt"))
-            with open(os.path.join(CKPT, "unet_effb0_sweep.json"), "w") as f:
+            torch.save(model.state_dict(), os.path.join(CKPT, f"{tag}_best.pt"))
+            with open(os.path.join(CKPT, f"{tag}_sweep.json"), "w") as f:
                 json.dump(sweep, f, indent=2)
-    pd.DataFrame(log_rows).to_csv(os.path.join(OUT, "train_log_unet_effb0.csv"), index=False)
+    pd.DataFrame(log_rows).to_csv(os.path.join(OUT, f"train_log_{tag}.csv"), index=False)
     print("best proxy50:", best)
 
 
