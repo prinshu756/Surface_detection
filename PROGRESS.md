@@ -28,6 +28,14 @@ Target: **public LB ≥ 0.65**. Deadline: **2026-11-18 18:30 UTC**. Max 5 subs/d
 - Primary: **SegFormer (smp.Segformer, mit_b2, 24.7M params)**, batch 10, 15 epochs, BCE(pos_weight)+Dice, cosine LR, HFlip/Brightness/GaussNoise aug.
 - Per-class threshold sweep on val each epoch; checkpoint selected on tuned-threshold proxy.
 
+## Phase map
+| Phase | Files | Status |
+|---|---|---|
+| 0 — Recon/EDA | `src/eda_gpu.py`, `src/rle.py`, `src/metric.py`, `src/split.py`, `outputs/eda_report.json` | done |
+| 1 — Baseline + first submission | `src/train.py`, `src/infer.py`, `src/check_submission.py` | running |
+| 2 — LB-feedback iteration (thresholds/TTA/aug) | TBD from first LB score | next |
+| 3 — Ensemble / final submissions | TBD | planned |
+
 ## Submissions log
 | # | Method | File | CV proxy | Public LB | Notes |
 |---|--------|------|----------|-----------|-------|
