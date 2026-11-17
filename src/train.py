@@ -188,10 +188,11 @@ def main():
     # class-aware oversampling: duplicate defect rows so rare classes appear in every batch
     tr_os = tr
     if args.oversample:
+        has_mask = tr["mask_rle"].fillna("").astype(str).str.strip().ne("")
         parts = [tr]
         for spec in args.oversample.split(","):
             cls, k = spec.split(":")
-            sel = tr[tr["defect_type"] == cls.strip()]
+            sel = tr[(tr["defect_type"] == cls.strip()) & has_mask]  # defect rows only
             parts.extend([sel] * (int(k) - 1))
         tr_os = pd.concat(parts, ignore_index=True)
         print(f"oversampled train rows: {len(tr)} -> {len(tr_os)}")
@@ -244,6 +245,7 @@ def main():
     scaler = torch.amp.GradScaler("cuda")
 
     start_ep = 0
+    resume_step = 0
     best = -1.0
     last_path = os.path.join(CKPT, f"{tag}_last.pt")
     if args.resume and os.path.exists(last_path):
@@ -252,16 +254,24 @@ def main():
         opt.load_state_dict(state["opt"])
         sched.load_state_dict(state["sched"])
         scaler.load_state_dict(state["scaler"])
-        start_ep = state["epoch"] + 1
+        ep_saved = state["epoch"]
+        st = state.get("step", -1)
+        if st is None or st < 0:      # epoch completed
+            start_ep, resume_step = ep_saved + 1, 0
+        else:                          # mid-epoch
+            start_ep, resume_step = ep_saved, st + 1
         best = state["best"]
-        print(f"resumed from {last_path}: epoch {start_ep}/{args.epochs}, best {best:.4f}")
+        print(f"resumed from {last_path}: epoch {start_ep} step {resume_step}, best {best:.4f}")
 
     log_rows = []
     for ep in range(start_ep, args.epochs):
         model.train()
         t0 = time.time()
         running = 0.0
+        n_logged = 0
         for step, (img, mask) in enumerate(train_ld):
+            if ep == start_ep and step < resume_step:
+                continue  # skip steps already completed in the resumed epoch
             img = img.to(DEVICE, non_blocking=True)
             mask = mask.to(DEVICE, non_blocking=True).float()
             with torch.autocast("cuda", dtype=torch.float16):
@@ -272,16 +282,21 @@ def main():
             scaler.step(opt)
             scaler.update()
             running += loss.item()
+            n_logged += 1
+            if step % 250 == 249:  # mid-epoch crash protection (~5 min of work)
+                torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                            "sched": sched.state_dict(), "scaler": scaler.state_dict(),
+                            "epoch": ep, "step": step, "best": best}, last_path)
         sched.step()
         sweep = validate(model, val_ld)
         elapsed = time.time() - t0
         score = sweep["best_proxy_total"]  # selection on tuned-threshold proxy (what inference deploys)
-        log_rows.append({"epoch": ep, "loss": running / max(len(train_ld), 1),
+        log_rows.append({"epoch": ep, "loss": running / max(n_logged, 1),
                          "proxy50": score, "best_proxy": sweep["best_proxy_total"],
                          "dice50_a": sweep[CLASSES[0]]["dice50"], "dice50_b": sweep[CLASSES[1]]["dice50"],
                          "dice50_c": sweep[CLASSES[2]]["dice50"], "dice50_d": sweep[CLASSES[3]]["dice50"],
                          "sec": elapsed})
-        print(f"ep {ep:02d} loss {running/len(train_ld):.4f} proxy50 {score:.4f} "
+        print(f"ep {ep:02d} loss {running/max(n_logged,1):.4f} proxy50 {score:.4f} "
               f"best_proxy {sweep['best_proxy_total']:.4f} "
               f"dice50 {[round(sweep[c]['dice50'], 3) for c in CLASSES]} "
               f"({elapsed:.0f}s)")
@@ -292,7 +307,7 @@ def main():
                 json.dump(sweep, f, indent=2)
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
                     "sched": sched.state_dict(), "scaler": scaler.state_dict(),
-                    "epoch": ep, "best": best}, last_path)
+                    "epoch": ep, "step": -1, "best": best}, last_path)
     pd.DataFrame(log_rows).to_csv(os.path.join(OUT, f"train_log_{tag}.csv"), index=False)
     print("best proxy:", best)
 
