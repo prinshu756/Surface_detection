@@ -41,7 +41,14 @@ Target: **public LB ≥ 0.65**. Deadline: **2026-11-18 18:30 UTC**. Max 5 subs/d
 |---|--------|------|----------|-----------|-------|
 | 0 | sample-as-is (user) | submission.csv | — | 0.27337 | pre-filled sample masks ≈ noise |
 | 1 | segformer mit_b2 ep3 | submission_segformer_mit_b2_ep3.csv | 0.4964 | **0.47704** | c dice .598 / d .696, a/b = 0 (3 epochs too few for rare classes); CV≈LB → proxy is trustworthy |
+| 2 | segformer mit_b2 15ep best (ep7) | submission_segformer_mit_b2_e15best.csv | 0.5098 | **0.49023** | c .577 / d .750; **d collapsed to 0 after ep8** (model learned to sacrifice d); a/b still 0 |
 
 ## Key insight after submission #1
 - Official score decomposition estimate: FGDice 0.324, FPScore ~0.80, EmptyAcc ~0.90 → to reach 0.65 need avg FGDice ≈ 0.685 → **defect_a and defect_b must start predicting** (they were 0.0).
 - Phase 2 plan: (a) 15-epoch run → expect c/d ↑ and possibly a/b liftoff; (b) if a/b still 0 → oversample a/b rows + raise pos_weight; (c) per-class threshold re-tune on the longer-trained model; (d) hflip TTA.
+
+## Phase 2 (running)
+- Problem A: a/b never learn — b has 2.7% row presence → most batches contain zero b pixels → no gradient.
+- Problem B: defect_d collapse at late epochs (loss ↓ while d dice → 0): model prefers zero d-predictions (saves pos_weighted BCE FPs; dice loss for empty-d rows ≈ 0).
+- Fix run `segformer_mit_b2_os`: oversample defect rows a×3, b×8, d×2 (+13% rows), pos_weight factor 0.35→0.15 (mild, computed on the oversampled distribution), warm start from ep-7 weights, lr 2e-4, 10 epochs (~4h).
+- Plan after: infer with hflip TTA, submit best of plain-vs-TTA by val proxy (4 subs left today, 5 tomorrow).

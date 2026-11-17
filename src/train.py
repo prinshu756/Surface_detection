@@ -158,6 +158,12 @@ def parse_args():
     ap.add_argument("--tag", default=None, help="checkpoint/log tag; defaults to arch_encoder")
     ap.add_argument("--resume", action="store_true",
                     help="continue from {tag}_last.pt (model+optimizer+scheduler+scaler state)")
+    ap.add_argument("--init_from", default=None,
+                    help="warm-start model weights from a checkpoint (state_dict)")
+    ap.add_argument("--oversample", default=None,
+                    help="class oversampling as 'defect_a:3,defect_b:8' (total copies per defect row)")
+    ap.add_argument("--pw_factor", type=float, default=0.35,
+                    help="pos_weight strength factor for BCE")
     ap.add_argument("--vflip", action="store_true", help="also use vertical flip augmentation")
     ap.add_argument("--rotate", action="store_true", help="add small ShiftScaleRotate augmentation")
     return ap.parse_args()
@@ -179,12 +185,23 @@ def main():
     tr = tr.reset_index(drop=True)
     img_dir = os.path.join(DATA, "public", "train")
 
-    # class weights for BCE (presence frequency)
-    freq = tr.groupby("defect_type")["mask_rle"].apply(
+    # class-aware oversampling: duplicate defect rows so rare classes appear in every batch
+    tr_os = tr
+    if args.oversample:
+        parts = [tr]
+        for spec in args.oversample.split(","):
+            cls, k = spec.split(":")
+            sel = tr[tr["defect_type"] == cls.strip()]
+            parts.extend([sel] * (int(k) - 1))
+        tr_os = pd.concat(parts, ignore_index=True)
+        print(f"oversampled train rows: {len(tr)} -> {len(tr_os)}")
+
+    # class weights for BCE (presence frequency in the ACTUAL training distribution)
+    freq = tr_os.groupby("defect_type")["mask_rle"].apply(
         lambda s: s.fillna("").astype(str).str.strip().ne("").mean()
     )
     pos_weight = torch.tensor(
-        [(1 - freq[c]) / max(freq[c], 1e-3) * 0.35 + 1.0 for c in CLASSES],
+        [(1 - freq[c]) / max(freq[c], 1e-3) * args.pw_factor + 1.0 for c in CLASSES],
         dtype=torch.float32, device=DEVICE,
     ).view(1, 4, 1, 1)  # broadcast across (B, C, H, W)
     print("pos_weight:", pos_weight.flatten().tolist())
@@ -205,7 +222,7 @@ def main():
     ])
     val_tf = A.Compose([A.Normalize(mean=(MEAN,), std=(STD,), max_pixel_value=1.0), ToTensorV2()])
 
-    train_ds = DefectDataset(tr, img_dir, aug_tf)
+    train_ds = DefectDataset(tr_os, img_dir, aug_tf)
     val_ds = DefectDataset(va, img_dir, val_tf)
     train_ld = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=NUM_WORKERS,
                           pin_memory=PIN_MEMORY, persistent_workers=NUM_WORKERS > 0, drop_last=True)
@@ -217,6 +234,9 @@ def main():
             "upernet": smp.UPerNet}[args.arch]
     model = arch(encoder_name=args.encoder, encoder_weights="imagenet",
                  in_channels=1, classes=4).to(DEVICE)
+    if args.init_from and os.path.exists(args.init_from):
+        model.load_state_dict(torch.load(args.init_from, map_location=DEVICE))
+        print(f"warm-started from {args.init_from}")
     print(f"model: {args.arch}/{args.encoder}, params {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
