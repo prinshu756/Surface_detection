@@ -22,7 +22,7 @@ Target: **public LB ≥ 0.65**. Deadline: **2026-11-18 18:30 UTC**. Max 5 subs/d
 - fp16 autocast train step: 398 ms @ B=10 (6.8 min/epoch, 2.69 GiB peak) — fp32 @ B=10 is 14x SLOWER (5.6 s/step) → always autocast for training.
 - fp32 eval forward: 0.15 s/batch @ B=10 → validation ~30 s for 1,140 images.
 - First eval call pays a one-time ~1-2 min cuDNN benchmark search (eval-mode shapes).
-- DataLoader: 18 ms/batch with 2 workers (Windows: file_system sharing, no pin_memory, module-level Dataset for spawn pickling).
+- DataLoader: **num_workers=0 is the right config** — 290 ms/step (5 min/epoch, 15 epochs ≈ 1.2 h). workers=2 starves the GPU AND exhausts the Windows paging-file commit limit on long runs (crash 1455 twice). Module-level Dataset kept for spawn-pickle safety.
 
 ## Model
 - Primary: **SegFormer (smp.Segformer, mit_b2, 24.7M params)**, batch 10, 15 epochs, BCE(pos_weight)+Dice, cosine LR, HFlip/Brightness/GaussNoise aug.

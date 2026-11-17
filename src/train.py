@@ -34,7 +34,7 @@ CLASSES = ["defect_a", "defect_b", "defect_c", "defect_d"]
 W, H = 800, 128
 MEAN, STD = 0.3388, 0.2055
 DEVICE = "cuda"
-NUM_WORKERS = 2
+NUM_WORKERS = 0  # shared-memory worker transfer exhausts the Windows paging file on long runs (error 1455)
 PIN_MEMORY = False  # Windows shared-memory paging-file limitation (error 1455)
 
 THRESHOLDS = np.arange(0.20, 0.91, 0.05, dtype=np.float32)
@@ -156,6 +156,8 @@ def parse_args():
     ap.add_argument("--batch", type=int, default=10)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--tag", default=None, help="checkpoint/log tag; defaults to arch_encoder")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from {tag}_last.pt (model+optimizer+scheduler+scaler state)")
     ap.add_argument("--vflip", action="store_true", help="also use vertical flip augmentation")
     ap.add_argument("--rotate", action="store_true", help="add small ShiftScaleRotate augmentation")
     return ap.parse_args()
@@ -206,9 +208,9 @@ def main():
     train_ds = DefectDataset(tr, img_dir, aug_tf)
     val_ds = DefectDataset(va, img_dir, val_tf)
     train_ld = DataLoader(train_ds, batch_size=args.batch, shuffle=True, num_workers=NUM_WORKERS,
-                          pin_memory=PIN_MEMORY, persistent_workers=True, drop_last=True)
+                          pin_memory=PIN_MEMORY, persistent_workers=NUM_WORKERS > 0, drop_last=True)
     val_ld = DataLoader(val_ds, batch_size=args.batch, shuffle=False, num_workers=NUM_WORKERS,
-                        pin_memory=PIN_MEMORY, persistent_workers=True)
+                        pin_memory=PIN_MEMORY, persistent_workers=NUM_WORKERS > 0)
 
     arch = {"unet": smp.Unet, "unetplusplus": smp.UnetPlusPlus,
             "deeplabv3plus": smp.DeepLabV3Plus, "segformer": smp.Segformer,
@@ -221,9 +223,21 @@ def main():
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     scaler = torch.amp.GradScaler("cuda")
 
+    start_ep = 0
     best = -1.0
+    last_path = os.path.join(CKPT, f"{tag}_last.pt")
+    if args.resume and os.path.exists(last_path):
+        state = torch.load(last_path, map_location=DEVICE)
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state["opt"])
+        sched.load_state_dict(state["sched"])
+        scaler.load_state_dict(state["scaler"])
+        start_ep = state["epoch"] + 1
+        best = state["best"]
+        print(f"resumed from {last_path}: epoch {start_ep}/{args.epochs}, best {best:.4f}")
+
     log_rows = []
-    for ep in range(args.epochs):
+    for ep in range(start_ep, args.epochs):
         model.train()
         t0 = time.time()
         running = 0.0
@@ -256,6 +270,9 @@ def main():
             torch.save(model.state_dict(), os.path.join(CKPT, f"{tag}_best.pt"))
             with open(os.path.join(CKPT, f"{tag}_sweep.json"), "w") as f:
                 json.dump(sweep, f, indent=2)
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                    "sched": sched.state_dict(), "scaler": scaler.state_dict(),
+                    "epoch": ep, "best": best}, last_path)
     pd.DataFrame(log_rows).to_csv(os.path.join(OUT, f"train_log_{tag}.csv"), index=False)
     print("best proxy:", best)
 
